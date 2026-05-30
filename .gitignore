@@ -1,0 +1,38 @@
+# Keil
+*.uvguix.*
+*.uvoptx
+*.uvprojx
+*.uvopt
+*.uvproj
+*.htm
+*.dep
+*.crf
+*.o
+*.d
+*.axf
+*.lst
+*.lnp
+*.tra
+*.iex
+*.map
+*.build_log.htm
+JLinkLog.txt
+JLinkSettings.ini
+
+# Output files
+*.hex
+*.bin
+*.elf
+*.out
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
