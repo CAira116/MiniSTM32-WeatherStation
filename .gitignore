@@ -32,6 +32,17 @@ JLinkSettings.ini
 *.swo
 *~
 
+# Secrets
+tools/.env
+.env
+
+# Build outputs
+Output/
+DebugConfig/
+*.log
+*.sct
+*.Bak
+
 # OS
 .DS_Store
 Thumbs.db
