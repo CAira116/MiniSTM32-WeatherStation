@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>W1D6 GPIO MiniLib 自测</title>
+<style>
+  :root { --bg:#1a1a2e; --card:#16213e; --accent:#e94560; --text:#e0e0e0; --code-bg:#0d1117; --border:#2a2a4a; --green:#4ecca3; --yellow:#f0c040; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; line-height:1.8; max-width:900px; margin:0 auto; padding:2rem 1.5rem; }
+  h1 { font-size:1.8rem; color:var(--accent); margin-bottom:0.5rem; }
+  h2 { font-size:1.2rem; color:var(--accent); margin:2rem 0 0.8rem; border-bottom:2px solid var(--border); padding-bottom:0.3rem; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:1rem 1.3rem; overflow-x:auto; margin:0.6rem 0 1rem; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.87rem; line-height:1.5; }
+  code { background:var(--code-bg); padding:0.15em 0.45em; border-radius:4px; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.9em; }
+  .q-block { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1.2rem 1.5rem; margin:1.2rem 0; }
+  .q-block summary { font-size:1rem; font-weight:bold; color:var(--accent); cursor:pointer; padding:0.4rem 0; }
+  .q-block summary:hover { color:#ff6b81; }
+  .answer { margin-top:0.8rem; padding:0.8rem 1.2rem; background:#0a1a1a; border-left:3px solid var(--green); border-radius:4px; }
+  .answer p { margin:0.4rem 0; }
+  .answer strong { color:var(--green); }
+  .wrong { color:var(--accent); }
+  table { width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:0.9rem; }
+  th,td { border:1px solid var(--border); padding:0.5rem 0.8rem; text-align:left; }
+  th { background:var(--card); color:var(--accent); }
+  button { background:var(--accent); color:#fff; border:none; padding:0.5em 1.2em; border-radius:6px; cursor:pointer; font-size:0.9rem; margin:0.4rem 0.3rem 0.4rem 0; }
+  button:hover { opacity:0.85; }
+  textarea { width:100%; min-height:80px; background:var(--code-bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.7rem; font-family:'Cascadia Code',Consolas,monospace; font-size:0.87rem; resize:vertical; }
+  .score-box { text-align:center; font-size:1.5rem; margin:1.5rem 0; }
+  .score-box span { font-size:3rem; font-weight:bold; }
+  @media(max-width:600px){ body{padding:1rem;} pre{padding:0.7rem;font-size:0.78rem;} }
+</style>
+</head>
+<body>
+
+<h1>📝 W1D6 GPIO MiniLib 自测</h1>
+<p style="color:#888;">每题先自己写在纸上/脑子里回答，再点「查看答案」对答案。别偷看。</p>
+
+<div class="score-box" id="scoreArea" style="display:none;">
+  你的得分：<span id="scoreNum">0</span> / 5
+</div>
+<button onclick="showAll()">👀 全部展开</button>
+<button onclick="hideAll()">🙈 全部折叠</button>
+<button onclick="resetScore()">🔄 重新计分</button>
+
+<!-- ============ Q1 ============ -->
+<div class="q-block">
+<details id="q1">
+<summary>第 1 题：引脚在寄存器里占几位？pin7 在 CRL 的哪几个 bit？</summary>
+
+<p><strong>相关代码：</strong></p>
+<pre>// gpio.c — gpio_init 中的偏移计算
+uint8_t offset;
+
+if (pin &lt; 8) {                     // pin 0-7 → CRL
+    offset = pin * 4;               // ← 为什么乘 4？
+    port->CRL &amp;= ~(0xF &lt;&lt; offset);
+    port->CRL |= (mode &lt;&lt; offset);
+} else {                            // pin 8-15 → CRH
+    offset = (pin - 8) * 4;
+    port->CRH &amp;= ~(0xF &lt;&lt; offset);
+    port->CRH |= (mode &lt;&lt; offset);
+}</pre>
+
+<p><strong>CRL 寄存器位布局：</strong></p>
+<pre>bit  31-28 | 27-24 | 23-20 | 19-16 | 15-12 | 11-8  | 7-4   | 3-0
+      pin7 | pin6  | pin5  | pin4  | pin3  | pin2  | pin1  | pin0</pre>
+
+<div style="margin-top:0.8rem;">
+  <button onclick="markQ(this, 'q1r')">✅ 我答对了</button>
+  <button onclick="markQ(this, 'q1r', true)">❌ 我答错了</button>
+</div>
+
+<div class="answer" id="q1r" style="display:none;">
+<p><strong>答案：每个引脚占 4 位。pin7 在 CRL 的 bit 31-28。</strong></p>
+<p>每个引脚 = CNF[1:0] + MODE[1:0] = 4 位。pin7 是 CRL 最后一个（bit31-28），pin0 是第一个（bit3-0）。由此得到：<code>offset = pin × 4</code>。</p>
+<p class="wrong"><strong>常见错误：</strong>以为 pin7 在 bit 7-4。记住——是按 pin 编号从低到高排，pin0 在最低 4 位，pin7 在最高 4 位。</p>
+</div>
+</details>
+</div>
+
+<!-- ============ Q2 ============ -->
+<div class="q-block">
+<details id="q2">
+<summary>第 2 题：0xF &lt;&lt; offset 里的 0xF 为什么是四个 1？要清 3 位该用几？</summary>
+
+<p><strong>相关代码：</strong></p>
+<pre>// gpio.c — 清零目标 4 位的咒语
+port->CRL &amp;= ~(0xF &lt;&lt; offset);   // 0xF = 1111(binary) = 4 个 1</pre>
+
+<p><strong>逐步拆解（offset = 20）：</strong></p>
+<pre>0xF                         = ... 0000 0000 0000 1111   ← 4个1
+0xF &lt;&lt; 20                  = ... 1111 0000 ...(20个0)   ← 4个1移到bit20-23
+~(0xF &lt;&lt; 20)               = ... 0000 1111 ...          ← 取反，bit20-23=0
+CRL &amp;= ~(0xF &lt;&lt; 20)        = 只把bit20-23清零，其他不变</pre>
+
+<div style="margin-top:0.8rem;">
+  <button onclick="markQ(this, 'q2r')">✅ 我答对了</button>
+  <button onclick="markQ(this, 'q2r', true)">❌ 我答错了</button>
+</div>
+
+<div class="answer" id="q2r" style="display:none;">
+<p><strong>答案：0xF = 1111（二进制）= 4 个 1 = 代表 4 位。要清 3 位用 <code>0x7</code>（0111 = 3 个 1）。</strong></p>
+<table>
+  <tr><th>要清几位</th><th>十六进制</th><th>二进制</th></tr>
+  <tr><td>1 位</td><td><code>0x1</code></td><td>0001</td></tr>
+  <tr><td>2 位</td><td><code>0x3</code></td><td>0011</td></tr>
+  <tr><td>3 位</td><td><code>0x7</code></td><td>0111</td></tr>
+  <tr><td>4 位</td><td><code>0xF</code></td><td>1111</td></tr>
+  <tr><td>8 位</td><td><code>0xFF</code></td><td>1111 1111</td></tr>
+</table>
+<p><code>&amp;= ~(mask &lt;&lt; offset)</code> 是嵌入式最常用的位操作咒语，今天以后必须能背出来。</p>
+</div>
+</details>
+</div>
+
+<!-- ============ Q3 ============ -->
+<div class="q-block">
+<details id="q3">
+<summary>第 3 题：BSRR 拉高 PA3 写哪个 bit？拉低 PA3 写哪个 bit？</summary>
+
+<p><strong>相关代码：</strong></p>
+<pre>// gpio.c — gpio_write
+void gpio_write(GPIO_TypeDef *port, uint8_t pin, uint8_t value)
+{
+    if (value)
+        port->BSRR = (1 &lt;&lt; pin);              // ← 拉高
+    else
+        port->BSRR = (1 &lt;&lt; (pin + 16));        // ← 拉低
+}</pre>
+
+<p><strong>BSRR 寄存器结构：</strong></p>
+<pre>高 16 位 (bit 16-31)：复位区 → 写 1 = 引脚拉低
+低 16 位 (bit 0-15) ：置位区 → 写 1 = 引脚拉高
+任何位写 0 → 不产生效果，硬件自动忽略</pre>
+
+<div style="margin-top:0.8rem;">
+  <button onclick="markQ(this, 'q3r')">✅ 我答对了</button>
+  <button onclick="markQ(this, 'q3r', true)">❌ 我答错了</button>
+</div>
+
+<div class="answer" id="q3r" style="display:none;">
+<p><strong>答案：拉高 PA3 → 写 bit 3（<code>1 &lt;&lt; 3</code>）。拉低 PA3 → 写 bit 19（<code>1 &lt;&lt; (3 + 16)</code>）。</strong></p>
+<p>同一个 pin 号，打在低半区 = 置高，打在高半区 = 置低。</p>
+<p class="wrong"><strong>常见错误：</strong>以为拉低是 <code>BSRR = (0 &lt;&lt; pin)</code>——写 0 到 BSRR 什么都不发生！拉低的正确姿势是往高 16 位写 1。</p>
+</div>
+</details>
+</div>
+
+<!-- ============ Q4 ============ -->
+<div class="q-block">
+<details id="q4">
+<summary>第 4 题：#define OUT_PP 0x03 和 gpio_init(GPIOA,5,OUT_PP) 之间，预处理器做了什么？</summary>
+
+<p><strong>相关代码：</strong></p>
+<pre>// gpio.h — 模式宏定义
+#define OUT_PP      0x03   // 推挽输出 50MHz
+#define OUT_OD      0x07   // 开漏输出 50MHz
+#define IN_PU       0x08   // 上拉输入
+#define IN_FLOAT    0x04   // 浮空输入</pre>
+
+<pre>// 你写的代码：
+gpio_init(GPIOA, 5, OUT_PP);
+
+// ▼ 预处理器处理后，编译器实际看到的：
+gpio_init(GPIOA, 5, 0x03);</pre>
+
+<div style="margin-top:0.8rem;">
+  <button onclick="markQ(this, 'q4r')">✅ 我答对了</button>
+  <button onclick="markQ(this, 'q4r', true)">❌ 我答错了</button>
+</div>
+
+<div class="answer" id="q4r" style="display:none;">
+<p><strong>答案：预处理器在编译前执行纯文本替换，把 <code>OUT_PP</code> 直接替换成 <code>0x03</code>。</strong></p>
+<p><code>#define A B</code> = "全文搜索 A，换成 B"。不检查类型、不计算、不理语义——就是最粗暴的查找替换。</p>
+<p>所以写 <code>#define OUT_PP 0x03</code> 时：</p>
+<ul style="margin-left:1.5rem;">
+  <li>OUT_PP 随便起名，但最好全大写（约定俗成）</li>
+  <li>0x03 必须准确对应手册里的 CNF+MODE 组合</li>
+  <li>宏后面不要加分号！<code>#define OUT_PP 0x03;</code> ← 分号也被替换进去，会炸</li>
+</ul>
+</div>
+</details>
+</div>
+
+<!-- ============ Q5 ============ -->
+<div class="q-block">
+<details id="q5">
+<summary>第 5 题：今天的 delay 不加 volatile 灯就不闪——原因一句话说清楚。</summary>
+
+<p><strong>相关代码：</strong></p>
+<pre>// ❌ 不闪的版本
+void delay(uint32_t n)     // ← 没有 volatile
+{
+    while (n--);            // 编译器认为这个循环"什么都没干"，直接优化删除
+}
+
+// ✅ 能闪的版本
+void delay(volatile uint32_t n)   // ← 加了 volatile
+{
+    while (n--);                   // 编译器：好吧，老老实实每次循环检查 n
+}</pre>
+
+<p><strong>现象回顾：</strong></p>
+<pre>// main.c 调用
+gpio_toggle(GPIOC, 13);
+delay(5000000);              // 肉眼应该看到明显闪烁
+gpio_toggle(GPIOC, 13);
+delay(5000000);              // 但如果 delay 被优化掉 → 两次 toggle 几乎同时发生 → 看起来常亮</pre>
+
+<div style="margin-top:0.8rem;">
+  <button onclick="markQ(this, 'q5r')">✅ 我答对了</button>
+  <button onclick="markQ(this, 'q5r', true)">❌ 我答错了</button>
+</div>
+
+<div class="answer" id="q5r" style="display:none;">
+<p><strong>答案：编译器优化时认为空循环"无副作用"，直接删除，导致两次 toggle 几乎同时执行（微秒级），肉眼看不到闪烁。</strong></p>
+<p><code>volatile</code> = "这个变量可能随时被外部改变（中断/硬件），每次用到它必须从内存重新读，不准缓存，不准删相关操作。"</p>
+<table>
+  <tr><th>场景</th><th>加 volatile？</th></tr>
+  <tr><td>延时循环变量</td><td><span style="color:#4ecca3">✅ 加</span></td></tr>
+  <tr><td>指向硬件寄存器的指针</td><td><span style="color:#4ecca3">✅ 必须加</span></td></tr>
+  <tr><td>中断里修改的全局变量</td><td><span style="color:#4ecca3">✅ 必须加</span></td></tr>
+  <tr><td>普通局部变量</td><td>❌ 不加</td></tr>
+</table>
+</div>
+</details>
+</div>
+
+<!-- ============ FINAL SCORE ============ -->
+<div class="score-box" id="scoreArea2" style="display:none;">
+  <p>全部答完！</p>
+  <p>你的得分：<span id="scoreNum2" style="font-size:3rem;font-weight:bold;">0</span> / 5</p>
+  <p id="scoreComment" style="font-size:1rem;color:#888;"></p>
+</div>
+
+<script>
+let correct = 0;
+let total = 5;
+let answered = new Set();
+
+function markQ(btn, answerId, isWrong) {
+  let qDetail = btn.closest('details');
+  let qId = qDetail.id;
+  if (answered.has(qId)) return;  // prevent double count
+  answered.add(qId);
+
+  if (!isWrong) {
+    correct++;
+    btn.style.background = '#4ecca3';
+  } else {
+    btn.style.background = '#e94560';
+  }
+  document.getElementById(answerId).style.display = 'block';
+
+  // show score
+  document.getElementById('scoreArea').style.display = 'block';
+  document.getElementById('scoreArea2').style.display = 'block';
+  document.getElementById('scoreNum').textContent = correct;
+  document.getElementById('scoreNum2').textContent = correct;
+
+  if (correct === 5) {
+    document.getElementById('scoreComment').textContent = '🏆 全对！GPIO 寄存器操作你已经吃透了。';
+  } else if (correct >= 3) {
+    document.getElementById('scoreComment').textContent = '还行，错的地方回去看教程对应章节再测一次。';
+  } else {
+    document.getElementById('scoreComment').textContent = '错太多了，今天的内容还得再过一遍，别急着往下走。';
+  }
+}
+
+function showAll() {
+  document.querySelectorAll('details').forEach(d => d.open = true);
+  document.querySelectorAll('.answer').forEach(a => a.style.display = 'block');
+}
+function hideAll() {
+  document.querySelectorAll('details').forEach(d => d.open = false);
+  document.querySelectorAll('.answer').forEach(a => a.style.display = 'none');
+}
+function resetScore() {
+  correct = 0;
+  answered.clear();
+  document.querySelectorAll('button').forEach(b => b.style.background = '');
+  document.querySelectorAll('.answer').forEach(a => a.style.display = 'none');
+  document.getElementById('scoreArea').style.display = 'none';
+  document.getElementById('scoreArea2').style.display = 'none';
+  document.getElementById('scoreNum').textContent = '0';
+  document.getElementById('scoreNum2').textContent = '0';
+}
+</script>
+
+</body>
+</html>

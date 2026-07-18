@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEMS W1D1-D9 知识体系 · MiniLib-F103</title>
+<style>
+  :root { --bg:#1a1a2e; --card:#16213e; --accent:#e94560; --text:#e0e0e0; --code-bg:#0d1117; --border:#2a2a4a; --green:#4ecca3; --yellow:#f0c040; --blue:#5dade2; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; line-height:1.8; max-width:960px; margin:0 auto; padding:2rem 1.5rem; }
+  h1 { font-size:2rem; color:var(--accent); margin-bottom:0.3rem; }
+  h2 { font-size:1.3rem; color:var(--accent); margin:2.2rem 0 0.8rem; border-bottom:2px solid var(--border); padding-bottom:0.3rem; }
+  h3 { font-size:1.05rem; color:var(--yellow); margin:1.2rem 0 0.5rem; }
+  h4 { font-size:0.95rem; color:var(--blue); margin:0.8rem 0 0.3rem; }
+  p { margin:0.6rem 0; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:1rem 1.3rem; overflow-x:auto; margin:0.6rem 0 1rem; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.86rem; line-height:1.5; }
+  code { background:var(--code-bg); padding:0.15em 0.45em; border-radius:4px; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.9em; }
+  table { width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:0.9rem; }
+  th,td { border:1px solid var(--border); padding:0.5rem 0.8rem; text-align:left; }
+  th { background:var(--card); color:var(--accent); }
+  .box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem 1.5rem; margin:1rem 0; }
+  .box.key { border-left:4px solid var(--green); }
+  .box.warn { border-left:4px solid var(--yellow); }
+  .box.danger { border-left:4px solid var(--accent); }
+  .reg-diagram { font-family:'Cascadia Code','Fira Code',monospace; white-space:pre; background:var(--code-bg); padding:0.8rem 1rem; border-radius:6px; font-size:0.83rem; overflow-x:auto; }
+  a { color:var(--accent); }
+  .toc { display:flex; flex-wrap:wrap; gap:0.5rem; margin:1rem 0; }
+  .toc a { background:var(--card); border:1px solid var(--border); padding:0.4em 0.9em; border-radius:6px; text-decoration:none; font-size:0.9rem; }
+  .toc a:hover { border-color:var(--accent); }
+  .tag { display:inline-block; background:var(--accent); color:#fff; font-size:0.7rem; padding:0.15em 0.5em; border-radius:4px; margin-right:0.3em; }
+  hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+  @media(max-width:600px){ body{padding:1rem;} pre{padding:0.7rem; font-size:0.78rem;} }
+</style>
+</head>
+<body>
+
+<h1>📚 SEMS Week 1 知识体系</h1>
+<p style="color:#888;">2026-07-09 ~ 07-10 · D1-D9 · MiniLib 四模块（gpio + rcc + systick + usart）</p>
+
+<div class="toc">
+  <a href="#d1">D1-D3 Blinky</a>
+  <a href="#d4">D4 按键</a>
+  <a href="#d5">D5 EXTI</a>
+  <a href="#d6">D6 gpio</a>
+  <a href="#d7">D7 RCC</a>
+  <a href="#d8">D8 SysTick</a>
+  <a href="#d9">D9 USART</a>
+  <a href="#summary">总套路</a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="d1">D1-D3 · 环境搭建 & 寄存器版 Blinky</h2>
+
+<h3>核心概念：GPIO 是谁？</h3>
+<p>STM32 芯片外面有一排金属引脚，GPIO（General Purpose Input/Output）是控制这些引脚的外设模块。你可以把任意引脚配置成<strong>输入</strong>（读外面电压）或<strong>输出</strong>（自己产生 3.3V/0V）。</p>
+
+<h3>四步点灯法（寄存器版）</h3>
+<pre>// ① 开 GPIO 口时钟 —— 不给电，模块是死的
+RCC->APB2ENR |= 1 << 2;           // GPIOA 挂在 APB2 总线 bit2 上
+
+// ② 清空目标引脚配置位
+GPIOA->CRL &= ~(0xF << 20);       // PA5 在 CRL 的 bit20-23，先清零
+
+// ③ 写入模式
+GPIOA->CRL |= (0x3 << 20);        // 0x3 = 0011 = 推挽输出 50MHz
+
+// ④ 输出高低电平
+GPIOA->BSRR = 1 << 5;             // PA5 高 → LED 亮
+GPIOA->BSRR = (1 << (5+16));      // PA5 低 → LED 灭</pre>
+
+<div class="box key">
+<strong>🔑 嵌入式第一咒语：</strong><code>时钟 → 模式 → 数据</code>，三步走。忘开时钟 = 代码全对但什么都不发生，调三天找不出原因。
+</div>
+
+<h3>五大 GPIO 寄存器速查</h3>
+<table>
+  <tr><th>寄存器</th><th>全称</th><th>干啥用</th><th>比喻</th></tr>
+  <tr><td><code>CRL</code></td><td>端口配置低寄存器</td><td>pin 0-7 的模式（输入/输出/速度）</td><td>遥控器上排按钮</td></tr>
+  <tr><td><code>CRH</code></td><td>端口配置高寄存器</td><td>pin 8-15 的模式</td><td>遥控器下排按钮</td></tr>
+  <tr><td><code>BSRR</code></td><td>端口位设置/清除寄存器</td><td>拉高/拉低引脚（原子操作）</td><td>瞬时开关，写1就生效</td></tr>
+  <tr><td><code>IDR</code></td><td>端口输入数据寄存器</td><td>只读，读取引脚当前电平</td><td>电压表</td></tr>
+  <tr><td><code>ODR</code></td><td>端口输出数据寄存器</td><td>读/写，当前输出电平</td><td>输出状态记录本</td></tr>
+</table>
+
+<div class="box danger">
+<strong>⚠️ volatile 的坑：</strong>指向寄存器的指针必须用 <code>volatile</code>。因为寄存器的值不受 CPU 控制（硬件自己会改），不加 volatile 编译器可能把连续两次读取优化成一次，读不到真实变化。<br>
+<code>#define GPIOA ((GPIO_TypeDef *)0x40010800)</code> 里的 <code>GPIO_TypeDef</code> 所有成员都是 volatile 的——STM32 头文件已经帮你加好了。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="d4">D4 · 按键输入（轮询）</h2>
+
+<h3>输入模式 vs 输出模式</h3>
+<table>
+  <tr><th>模式</th><th>电流流向</th><th>什么时候用</th></tr>
+  <tr><td>浮空输入</td><td>高阻态，引脚悬空时电平不确定</td><td>外部电路已确定电平</td></tr>
+  <tr><td>上拉输入</td><td>内部电阻拉到 VDD（3.3V），默认高</td><td>按键一脚接引脚，一脚接 GND</td></tr>
+  <tr><td>下拉输入</td><td>内部电阻拉到 GND，默认低</td><td>按键一脚接引脚，一脚接 VDD</td></tr>
+</table>
+
+<h3>按键电路（面包板）</h3>
+<pre>引脚 PA0 ──┬── 按键 ── GND
+           │
+        内部上拉电阻（~40kΩ）→ VDD 3.3V
+
+没按：PA0 被上拉电阻拉到 3.3V → IDR bit0 = 1
+按下：PA0 直接通 GND → IDR bit0 = 0</pre>
+
+<h3>轮询代码</h3>
+<pre>// 初始化 PA0 为上拉输入
+RCC->APB2ENR |= 1 << 2;
+GPIOA->CRL |= (0x8 << 0);       // CNF=10 MODE=00 = 0x8 = 上拉输入
+
+// 循环读按键（轮询）
+while (1) {
+    if ((GPIOA->IDR & (1 << 0)) == 0) {   // 读到 0 = 按键按下
+        // 做点什么
+    }
+}</pre>
+
+<h4>ODR 的双重身份（输入模式下）</h4>
+<p>同一个 ODR 寄存器，输出模式下决定输出电平，<strong>输入模式下开关内部上拉/下拉电阻：</strong></p>
+<pre>GPIOA->ODR |= (1 << 0);   // 输入模式下 → ODR bit0=1 → 启用上拉
+GPIOA->ODR &= ~(1 << 0);  // 输入模式下 → ODR bit0=0 → 启用下拉</pre>
+
+<!-- ============================================================ -->
+<h2 id="d5">D5 · 外部中断 EXTI</h2>
+
+<h3>为什么不用轮询？</h3>
+<p>轮询 = CPU 不停地在问"按键按了没？按键按了没？"——浪费电，占着 CPU 不让干别的事。<br>
+<strong>中断 = CPU 干自己的事，按键按下时硬件自动打断 CPU，处理完再回去。</strong></p>
+
+<h3>EXTI 六步配置流程（背下来）</h3>
+<pre>// ① 开 GPIO 时钟
+RCC->APB2ENR |= 1 << 2;               // GPIOA
+
+// ② 开 AFIO 时钟（中断要用的"接线板"）
+RCC->APB2ENR |= 1 << 0;               // AFIO
+
+// ③ 配置 GPIO 为输入
+GPIOA->CRL |= (0x8 << 0);             // PA0 上拉输入
+
+// ④ AFIO 接线：把 PA0 连到 EXTI0 线
+AFIO->EXTICR[0] &= ~(0xF << 0);       // EXTI0 ← PA0
+
+// ⑤ 配置 EXTI：上升沿/下降沿/双边沿触发
+EXTI->IMR  |= (1 << 0);               // 不屏蔽 EXTI0
+EXTI->RTSR |= (1 << 0);               // 上升沿触发（松开按键时触发）
+
+// ⑥ NVIC 使能：允许这个中断打断 CPU
+NVIC->ISER[0] = (1 << 6);             // EXTI0 的中断号是 6（要查手册！）
+NVIC->IP[6] = (0x01 << 4);            // 优先级设为 1</pre>
+
+<h3>EXTI 框架：三层漏斗</h3>
+<div class="reg-diagram">AFIO（接线板） → EXTI（检测器） → NVIC（总闸）
+把指定引脚       检测边沿（上升/    允许/禁止中断
+连到 EXTI 线     下降/双边沿）      送到 CPU</div>
+
+<h3>中断服务函数</h3>
+<pre>// 函数名必须和启动文件里的弱定义完全一致！写错一个字母=不触发
+void EXTI0_IRQHandler(void)
+{
+    if (EXTI->PR & (1 << 0)) {          // 检查 EXTI0 是否触发了
+        EXTI->PR |= (1 << 0);           // 写 1 清中断标志（必须清！）
+        // 你的处理代码
+    }
+}</pre>
+
+<div class="box warn">
+<strong>⚠️ 中断函数一定要清标志位！</strong><br>
+EXTI->PR 写 1 清零（和 BSRR 一样的设计）。不清 = 中断函数不断重入，MCU 卡死。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="d6">D6 · MiniLib gpio.c 封装（今天的内容）</h2>
+
+<p>详见完整教程：<a href="W1D6-gpio-tutorial.html" target="_blank">W1D6-gpio-tutorial.html</a> &nbsp;|&nbsp; 自测：<a href="W1D6-self-test.html" target="_blank">W1D6-self-test.html</a></p>
+
+<h3>四个函数一句话总结</h3>
+<table>
+  <tr><th>函数</th><th>一句话</th><th>核心寄存器</th></tr>
+  <tr><td><code>gpio_init</code></td><td>设置引脚是输入还是输出、什么模式</td><td>RCC_APB2ENR + CRL/CRH</td></tr>
+  <tr><td><code>gpio_write</code></td><td>指定引脚输出高或低</td><td>BSRR</td></tr>
+  <tr><td><code>gpio_read</code></td><td>看引脚现在高还是低，返回 0/1</td><td>IDR</td></tr>
+  <tr><td><code>gpio_toggle</code></td><td>高变低、低变高，来回翻</td><td>ODR → BSRR</td></tr>
+</table>
+
+<h3>gpio_init 核心逻辑：CRL vs CRH 的偏移计算</h3>
+<div class="reg-diagram">CRL (pin 0-7) ：每个 pin 占 4 位 → offset = pin × 4
+CRH (pin 8-15)：每个 pin 占 4 位 → offset = (pin - 8) × 4
+
+pin5  → CRL bit20-23   (5 × 4 = 20)
+pin10 → CRH bit8-11    ((10-8) × 4 = 8)</div>
+
+<h3>BSRR 原子操作原理</h3>
+<pre>低 16 位写 1 → 引脚拉高     例：BSRR = (1 << 5)  → PA5 High
+高 16 位写 1 → 引脚拉低     例：BSRR = (1 << 21) → PA5 Low  (21 = 5+16)
+写 0 到任何位 → 什么都不发生</pre>
+
+<!-- ============================================================ -->
+<h2 id="d7">D7 · rcc_sysclk_init — 系统时钟 8MHz → 72MHz</h2>
+
+<p>详见教程：<a href="W1D7-D8-tutorial.html" target="_blank">W1D7-D8-tutorial.html</a></p>
+
+<h3>时钟路径</h3>
+<div class="reg-diagram">HSE 8MHz → PLL ×9 → 72MHz → SYSCLK
+                                 ├→ AHB  ÷1 = 72MHz
+                                 ├→ APB2 ÷1 = 72MHz
+                                 └→ APB1 ÷2 = 36MHz（最大36）</div>
+
+<h3>四步配时钟（背下来）</h3>
+<pre>// 前置：Flash 等待周期！忘了 = 芯片卡死
+FLASH->ACR |= (0x2 << 0);            // 72MHz 需要 2 个等待周期
+
+// ① 开 HSE，等稳定
+RCC->CR |= (1 << 16);
+while (!(RCC->CR & (1 << 17)));
+
+// ② 配 PLL：HSE → ×9 → 72MHz
+RCC->CFGR |= (1 << 16);             // PLL 源 = HSE
+RCC->CFGR &= ~(1 << 17);            // 不分频
+RCC->CFGR |= (0x7 << 18);           // ×9
+RCC->CR |= (1 << 24);               // 开 PLL
+while (!(RCC->CR & (1 << 25)));
+
+// ③ 总线分频：APB1 ÷2 = 36MHz
+RCC->CFGR |= (0x4 << 8);
+
+// ④ 切换 SYSCLK 到 PLL
+RCC->CFGR |= (0x2 << 0);
+while ((RCC->CFGR & 0xC) != 0x8);</pre>
+
+<div class="box danger">
+<strong>⚠️ 踩坑：</strong>忘了 <code>FLASH->ACR</code> → 灯不闪 → CPU 卡死。<br>
+<strong>顺序铁律：</strong>Flash 等待周期 → 开 HSE → 配 PLL → 分频 → 切换。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="d8">D8 · SysTick 24位硬件定时器</h2>
+
+<p>详见教程：<a href="W1D7-D8-tutorial.html" target="_blank">W1D7-D8-tutorial.html</a></p>
+
+<h3>SysTick vs 旧 delay</h3>
+<table>
+  <tr><th></th><th>delay(volatile...)</th><th>systick_delay_ms()</th></tr>
+  <tr><td>精度</td><td>靠猜</td><td>精确毫秒</td></tr>
+  <tr><td>换芯片</td><td>重调</td><td>改 LOAD</td></tr>
+  <tr><td>CPU 用法</td><td>空转</td><td>硬件计数，以后能用中断</td></tr>
+</table>
+
+<h3>核心公式</h3>
+<pre>72MHz → AHB/8 = 9MHz → 每秒 9,000,000 周期
+1ms = 9,000 个周期 → SysTick->LOAD = 9000</pre>
+
+<h3>完整函数</h3>
+<pre>void systick_delay_ms(uint32_t ms)
+{
+    SysTick->CTRL &= ~(1 << 2);           // 时钟源 = AHB/8
+    SysTick->LOAD = 9000;                 // 1ms = 9000 周期
+    SysTick->CTRL |= 1;                   // 启动
+
+    while (ms--)                           // 循环 ms 次
+        while (!(SysTick->CTRL & (1 << 16)));  // 死等 1ms
+
+    SysTick->CTRL &= ~1;                  // 关闭
+}</pre>
+
+<h3>COUNTFLAG（bit16）自动清零机制</h3>
+<p>读 <code>SysTick->CTRL</code> 时，硬件自动把 bit16 清 0。所以 while 条件读到 bit16=1 的瞬间，标志位就已经清了，VAL 也自动重载——下次 wait 直接开始计时。</p>
+
+<!-- ============================================================ -->
+<h2 id="d9">D9 · USART 串口通信</h2>
+<p>详见教程：<a href="W1D9-usart-tutorial.html" target="_blank">W1D9-usart-tutorial.html</a></p>
+
+<h3>三个函数</h3>
+<table>
+  <tr><th>函数</th><th>一句话</th></tr>
+  <tr><td><code>usart_init</code></td><td>配好串口：时钟 → GPIO(AF_PP/IN_FLOAT) → 波特率 → 使能</td></tr>
+  <tr><td><code>usart_send_byte</code></td><td>等 TXE=1 → 往 DR 写一个字节 → 硬件自动发出</td></tr>
+  <tr><td><code>usart_send_string</code></td><td>一个字节一个字节发，碰到 '\0' 就停</td></tr>
+</table>
+
+<h3>关键寄存器</h3>
+<table>
+  <tr><th>寄存器</th><th>干什么</th><th>关键位</th></tr>
+  <tr><td><code>BRR</code></td><td>波特率 = 72MHz / baud</td><td>全部 16 位</td></tr>
+  <tr><td><code>SR</code></td><td>状态</td><td>bit7=TXE(DR空)、bit6=TC(全发完)</td></tr>
+  <tr><td><code>DR</code></td><td>数据</td><td>写=发送、读=接收</td></tr>
+  <tr><td><code>CR1</code></td><td>控制</td><td>bit13=UE(总开)、bit3=TE(发)、bit2=RE(收)</td></tr>
+</table>
+
+<h3>接线</h3>
+<div class="reg-diagram">USB-TTL RX ← PA9(TX)    USB-TTL TX → PA10(RX)    GND — GND</div>
+
+<h3>今晚的坑</h3>
+<div class="box warn">printf 重定向 + MicroLIB 和启动文件不兼容 → 编译链接失败。暂时用 <code>usart_send_string</code> 替代 printf，明天解决。</div>
+
+<!-- ============================================================ -->
+<h2 id="summary">🎯 Week 1 总套路</h2>
+
+<h3>GPIO 操作万能三步</h3>
+<div class="box key" style="font-size:1.1rem; text-align:center; padding:2rem;">
+<strong>① 开时钟</strong> → <strong>② 配模式（CRL/CRH）</strong> → <strong>③ 读写数据（BSRR/IDR）</strong>
+</div>
+
+<h3>位操作三咒语</h3>
+<table>
+  <tr><th>操作</th><th>咒语</th><th>含义</th></tr>
+  <tr><td>置位（写 1）</td><td><code>REG |= (1 &lt;&lt; n)</code></td><td>第 n 位变 1，其他不变</td></tr>
+  <tr><td>清零（写 0）</td><td><code>REG &amp;= ~(1 &lt;&lt; n)</code></td><td>第 n 位变 0，其他不变</td></tr>
+  <tr><td>清多位（写 0 到连续 k 位）</td><td><code>REG &amp;= ~(0xF &lt;&lt; offset)</code></td><td>从 offset 开始的 4 位清零</td></tr>
+</table>
+
+<h3>硬件调试三步</h3>
+<div class="box warn">
+<strong>① 编译不过 → 看第一条错误（后面都是连锁反应）<br>
+② 编译过但不工作 → 检查时钟开了没<br>
+③ 灯不闪 → volatile 加了没</strong>
+</div>
+
+<h3>文件组织</h3>
+<pre>C:\STM32\MiniLib-F103\
+├── gpio.h / gpio.c              ← GPIO 封装（4 函数）
+├── rcc.h / rcc.c                ← 时钟：系统主频 + 外设开关
+├── systick.h / systick.c        ← 精确毫秒延时
+├── main.c                       ← 调用测试（3 快闪 + 3 慢闪）
+├── W1D6-gpio-tutorial.html      ← D6 详细教程
+├── W1D6-self-test.html          ← 自测五题
+├── W1D7-D8-tutorial.html        ← D7-D8 详细教程
+├── W1D1-D8-reference.html       ← 本页 · 总索引
+└── SEMS-progress-dashboard.html ← 七周总览</pre>
+
+<hr>
+
+<p style="text-align:center; color:#888; font-size:0.9rem;">
+  2026-07-09 ~ 07-10 · SEMS Week 1 · MiniLib-F103<br>
+  3 个模块 · 7 个函数 · 0 Error 0 Warning ✅<br>
+  明天 W1D9 · USART 串口
+</p>
+
+</body>
+</html>

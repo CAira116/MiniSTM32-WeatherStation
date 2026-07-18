@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>W1D6：手写 GPIO 函数库 MiniLib — 从寄存器到封装</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --accent: #e94560;
+    --text: #e0e0e0;
+    --code-bg: #0d1117;
+    --border: #2a2a4a;
+    --green: #4ecca3;
+    --yellow: #f0c040;
+    --blue: #5dade2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.8;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  h1 { font-size: 2rem; color: var(--accent); margin-bottom: 0.3rem; }
+  h2 {
+    font-size: 1.4rem; color: var(--accent); margin: 2.5rem 0 1rem;
+    padding-bottom: 0.4rem; border-bottom: 2px solid var(--border);
+  }
+  h3 { font-size: 1.1rem; color: var(--yellow); margin: 1.5rem 0 0.6rem; }
+  h4 { font-size: 1rem; color: var(--blue); margin: 1rem 0 0.4rem; }
+  p { margin: 0.7rem 0; }
+  .subtitle { color: #888; font-size: 0.95rem; margin-bottom: 1.5rem; }
+
+  code {
+    background: var(--code-bg); padding: 0.2em 0.5em;
+    border-radius: 4px; font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    overflow-x: auto;
+    margin: 0.8rem 0 1.2rem;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 0.88rem;
+    line-height: 1.6;
+  }
+  .code-label {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.75rem;
+    padding: 0.2em 0.8em;
+    border-radius: 4px 4px 0 0;
+    margin-bottom: -1px;
+    font-weight: bold;
+  }
+  pre.labeled { border-radius: 0 8px 8px 8px; margin-top: 0; }
+
+  .box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin: 1rem 0;
+  }
+  .box.tip { border-left: 4px solid var(--green); }
+  .box.warn { border-left: 4px solid var(--yellow); }
+  .box.err  { border-left: 4px solid var(--accent); }
+  .box.q    { border-left: 4px solid var(--blue); }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 0.8rem 0 1.2rem;
+    font-size: 0.92rem;
+  }
+  th, td { border: 1px solid var(--border); padding: 0.6rem 0.9rem; text-align: left; }
+  th { background: var(--card); color: var(--accent); }
+
+  .step { margin-left: 1.5rem; }
+  .step li { margin: 0.4rem 0; }
+
+  strong { color: #fff; }
+  .hl { color: var(--accent); font-weight: bold; }
+  .gr { color: var(--green); font-weight: bold; }
+  .yl { color: var(--yellow); font-weight: bold; }
+
+  .register-diagram {
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    white-space: pre;
+    background: var(--code-bg);
+    padding: 0.8rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 1rem; }
+    pre { padding: 0.8rem; font-size: 0.78rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>🔧 W1D6：手写 GPIO 函数库</h1>
+<p class="subtitle">2026-07-10 · MiniLib-F103 第一块积木 · 从寄存器到自己的函数</p>
+
+<div class="box tip">
+<strong>📌 今天你做了什么？</strong><br>
+以前点灯要写 5 行寄存器操作，每次都翻手册。今天你把它们装进了 4 个函数 ——
+<code>gpio_init</code>、<code>gpio_write</code>、<code>gpio_read</code>、<code>gpio_toggle</code>，
+以后一行搞定，这辈子不用再手写 <code>GPIOA-&gt;CRL &amp;= ~(0xF &lt;&lt; 20)</code>。
+</div>
+
+<!-- ================================================================ -->
+<h2>0. 先搞清楚：我们到底在干什么？</h2>
+
+<h3>0.1 GPIO 是什么？</h3>
+<p>
+STM32 芯片外面有 <strong>一排金属引脚</strong>（pin），每个引脚可以当输入（读外面电压）
+也可以当输出（自己输出 3.3V 或 0V）。控制引脚的硬件模块叫 <strong>GPIO</strong>
+（General Purpose Input/Output，通用输入输出）。
+</p>
+
+<p>你的工作就是：<strong>通过写寄存器，告诉 GPIO 模块每个引脚干什么活、什么时候干。</strong></p>
+
+<h3>0.2 寄存器又是什么？</h3>
+<p>
+芯片内部有一堆"配置开关"，每个开关管一件事。<strong>寄存器 = 一组 32 位（bit）的开关组。</strong>
+写 1 = 开，写 0 = 关。CPU 通过对特定内存地址读写来操作这些开关。
+</p>
+
+<div class="box">
+<strong>把寄存器想象成遥控器：</strong><br>
+· CRL / CRH = 功能选择键（输入？输出？多大电流？）<br>
+· BSRR = 瞬时开关（按一下就生效，松手不变回去）<br>
+· IDR = 状态指示灯（只读，告诉你引脚现在几伏）<br>
+· ODR = 晾衣架状态（翻转用：看看现在是高还是低）
+</div>
+
+<h3>0.3 为什么要把寄存器"包起来"？</h3>
+
+<p>裸写寄存器（你 W1D3 的代码）：</p>
+<pre>// 点灯，5 行
+RCC->APB2ENR |= 1 << 2;           // 1. 开 GPIOA 时钟
+GPIOA->CRL &= ~(0xF << 20);      // 2. 清 PA5 配置位
+GPIOA->CRL |= (0x3 << 20);       // 3. 设 PA5 为推挽输出
+GPIOA->BSRR = 1 << 5;            // 4. PA5 拉高，灯亮
+// ... 想灭灯？又一行
+GPIOA->BSRR = (1 << (5 + 16));   // 5. PA5 拉低，灯灭</pre>
+
+<p>三周后回来看这段代码：0x3 是什么？20 从哪来的？为什么是 5+16？<strong>全忘了，从头翻手册。</strong></p>
+
+<p>封装成函数后：</p>
+<pre>gpio_init(GPIOA, 5, OUT_PP);     // 一句话：PA5 设为推挽输出
+gpio_write(GPIOA, 5, 1);         // PA5 高 —— 灯亮
+gpio_write(GPIOA, 5, 0);         // PA5 低 —— 灯灭
+gpio_toggle(GPIOA, 5);           // 翻转 —— 亮变灭、灭变亮</pre>
+
+<p>不用翻手册，不用背移位，<strong>看一眼就知道在干嘛。</strong>这就是封装的意义。</p>
+
+<!-- ================================================================ -->
+<h2>1. 工程结构：三个文件各管各的</h2>
+
+<table>
+  <tr><th>文件</th><th>角色（人话）</th><th>放什么</th></tr>
+  <tr>
+    <td><code>gpio.h</code></td>
+    <td>📋 目录 / 菜单</td>
+    <td>宏定义（给数字起名）+ 函数声明（告诉编译器"有这些函数"）</td>
+  </tr>
+  <tr>
+    <td><code>gpio.c</code></td>
+    <td>🔧 工具箱本体</td>
+    <td>四个函数的<strong>完整实现代码</strong> —— 每个大括号里的内容</td>
+  </tr>
+  <tr>
+    <td><code>main.c</code></td>
+    <td>🎬 主程序 / 使用者</td>
+    <td>调用 gpio_init、gpio_toggle 等来干具体的事（比如闪灯）</td>
+  </tr>
+</table>
+
+<div class="box tip">
+<strong>🔑 核心规则（记住这一条就不会再报错）：</strong><br>
+<code>.h</code> 负责"宣告" → <code>.c</code> 负责"实现" → <code>main.c</code> 负责"调用"<br>
+每个 <code>.c</code> 文件第一行必须 <code>#include "自己的.h"</code>，否则编译器不认识你的类型。
+</div>
+
+<!-- ================================================================ -->
+<h2>2. 逐个拆解：gpio.h 里每一行是什么意思</h2>
+
+<span class="code-label">gpio.h</span>
+<pre class="labeled">#ifndef __GPIO_H          // "如果还没有定义 __GPIO_H"
+#define __GPIO_H          // "那就定义它"
+                          // 两人配合 = 防止同一个文件被包含两次
+#include "stm32f10x.h"    // 拉进 ST 官方的寄存器定义（GPIOA、RCC、uint8_t...）
+
+// ── 模式宏：给四位二进制数起个能看懂的名字 ──
+#define IN_FLOAT    0x04   // 浮空输入   → CNF=01 MODE=00 → 0100 = 0x04
+#define IN_PU       0x08   // 上拉输入   → CNF=10 MODE=00 → 1000 = 0x08
+#define OUT_PP      0x03   // 推挽输出   → CNF=00 MODE=11 → 0011 = 0x03
+#define OUT_OD      0x07   // 开漏输出   → CNF=01 MODE=11 → 0111 = 0x07
+#define AF_PP       0x0B   // 复用推挽   → CNF=10 MODE=11 → 1011 = 0x0B
+
+// ── 函数声明：告诉编译器"这些函数存在，定义在别的文件里" ──
+void    gpio_init(GPIO_TypeDef *port, uint8_t pin, uint8_t mode);
+void    gpio_write(GPIO_TypeDef *port, uint8_t pin, uint8_t value);
+uint8_t gpio_read(GPIO_TypeDef *port, uint8_t pin);
+void    gpio_toggle(GPIO_TypeDef *port, uint8_t pin);
+
+#endif   // 结束 #ifndef 的区域</pre>
+
+<h3>2.1 #define 到底干了什么？</h3>
+
+<p><code>#define OUT_PP 0x03</code> 就是个<strong>纯文本替换器</strong>，在编译之前执行：</p>
+
+<pre>你写的代码：    gpio_init(GPIOA, 5, OUT_PP);
+                ↓ 预处理器把 OUT_PP 换成 0x03
+编译器看到的：  gpio_init(GPIOA, 5, 0x03);</pre>
+
+<p>为什么是 0x03？打开 STM32 参考手册 GPIO 章节，找到 CRL 寄存器描述中这张表：</p>
+
+<table>
+  <tr><th>CNF1</th><th>CNF0</th><th>MODE1</th><th>MODE0</th><th>二进制</th><th>十六进制</th><th>含义</th></tr>
+  <tr><td>0</td><td>0</td><td>1</td><td>1</td><td>0011</td><td><span class="gr">0x03</span></td><td>推挽输出，50MHz</td></tr>
+  <tr><td>0</td><td>1</td><td>1</td><td>1</td><td>0111</td><td>0x07</td><td>开漏输出，50MHz</td></tr>
+  <tr><td>0</td><td>1</td><td>0</td><td>0</td><td>0100</td><td>0x04</td><td>浮空输入</td></tr>
+  <tr><td>1</td><td>0</td><td>0</td><td>0</td><td>1000</td><td>0x08</td><td>上拉输入</td></tr>
+  <tr><td>1</td><td>0</td><td>1</td><td>1</td><td>1011</td><td>0x0B</td><td>复用推挽，50MHz</td></tr>
+</table>
+
+<div class="box q">
+<strong>💡 培养写代码的能力：</strong>以后你碰到一个新寄存器，先翻手册找到类似的配置表，然后问自己——"我需要哪几个常用的组合？"列出来，给每个起个名字，写完宏定义。这比死记硬背十六进制强一百倍。
+</div>
+
+<h3>2.2 #ifndef ... #define ... #endif 三件套</h3>
+
+<pre>// 设想：gpio.h 被 include 了两次
+#include "gpio.h"    // ← 第一次：__GPIO_H 未定义 → 定义它，引入所有内容
+#include "gpio.h"    // ← 第二次：__GPIO_H 已经有了 → 跳过全部内容</pre>
+
+<p>不写这个会怎样？如果 gpio.h 被多个 .c 包含，每个函数声明会出现两次，编译器报 "重复定义" 错误。</p>
+
+<!-- ================================================================ -->
+<h2>3. 逐个拆解：gpio.c 四个函数</h2>
+
+<span class="code-label">gpio.c</span>
+<pre class="labeled">#include "gpio.h"    // ← 永远第一行！不写这行 = 全部类型名报错</pre>
+
+<!-- ---------- 3.1 ---------- -->
+<h3>3.1 gpio_init —— 初始化（告诉芯片这个脚干什么活）</h3>
+
+<pre>void gpio_init(GPIO_TypeDef *port, uint8_t pin, uint8_t mode)
+{
+    // ═══ 阶段一：开时钟 ═══
+    if (port == GPIOA)
+        RCC->APB2ENR |= 1 << 2;       // GPIOA 在 APB2 总线 bit2
+    else if (port == GPIOB)
+        RCC->APB2ENR |= 1 << 3;       // GPIOB 在 APB2 总线 bit3
+    else if (port == GPIOC)
+        RCC->APB2ENR |= 1 << 4;       // GPIOC 在 APB2 总线 bit4
+
+    // ═══ 阶段二：写配置 ═══
+    uint8_t offset;                    // 该 pin 在寄存器里的起始位位置
+
+    if (pin &lt; 8) {                     // pin 0-7 → 用 CRL（低 8 个引脚）
+        offset = pin * 4;              // 每个 pin 占 4 位 → 位置 = pin号 × 4
+        port->CRL &amp;= ~(0xF &lt;&lt; offset); // ① 先清空这 4 位（写成 0000）
+        port->CRL |= (mode &lt;&lt; offset);  // ② 再写入新模式
+    } else {                           // pin 8-15 → 用 CRH（高 8 个引脚）
+        offset = (pin - 8) * 4;        // 例如 pin10 → (10-8)×4 = 8 → 从 bit8 开始
+        port->CRH &amp;= ~(0xF &lt;&lt; offset);
+        port->CRH |= (mode &lt;&lt; offset);
+    }
+}</pre>
+
+<h4>为什么 pin × 4？</h4>
+<p>每个 GPIO 引脚在配置寄存器里<strong>固定占 4 位</strong>：</p>
+
+<div class="register-diagram">CRL 寄存器（32位）：
+bit:  31-28  27-24  23-20  19-16  15-12  11-8   7-4    3-0
+      pin7   pin6   pin5   pin4   pin3   pin2   pin1   pin0
+      4位    4位    4位    4位    4位    4位    4位    4位
+
+pin5 的配置在 bit20-bit23 → 起始偏移 = 5 × 4 = 20  ← 这就是 offset</div>
+
+<h4>清空这 4 位是怎么做到的？</h4>
+<pre>port->CRL &amp;= ~(0xF &lt;&lt; offset);
+
+// 逐步拆解，假设 offset = 20 (pin5)：
+
+0xF                         = 0000 0000 0000 0000 0000 0000 0000 1111
+0xF &lt;&lt; 20                  = 0000 0000 0000 1111 0000 0000 0000 0000  （四个1对准bit20-23）
+~(0xF &lt;&lt; 20)               = 1111 1111 1111 0000 1111 1111 1111 1111  （取反，四个0对准目标位）
+
+CRL &amp;= 上面这个值           → 把 bit20-23 清零，其他位<strong>保持不变</strong></pre>
+
+<div class="box tip">
+<strong>🔑 &amp;= ~ 是嵌入式最常用的"清零指定几位"咒语：</strong><br>
+· <code>0xF</code> → 你要清几位？（4 位 = 0xF，8 位 = 0xFF）<br>
+· <code>&lt;&lt; offset</code> → 移到目标位置<br>
+· <code>~</code> → 取反，变成"目标位全 0，其余全 1"<br>
+· <code>&amp;=</code> → 0 的地方清零，1 的地方不动
+</div>
+
+<h4>写入新模式：</h4>
+<pre>port->CRL |= (mode &lt;&lt; offset);
+
+// 继续 pin5 的例子，mode = OUT_PP = 0x03 = 0011(binary)
+
+0x03 &lt;&lt; 20 = 0000 0000 0000 0011 0000 0000 0000 0000
+
+CRL |= 上面             → bit20=1, bit21=1, bit22=0, bit23=0
+                        → CNF0=1, CNF1=0, MODE0=1, MODE1=1
+                        → 推挽输出 50MHz ✓</pre>
+
+<!-- ---------- 3.2 ---------- -->
+<h3>3.2 gpio_write —— 输出高/低电平</h3>
+
+<pre>void gpio_write(GPIO_TypeDef *port, uint8_t pin, uint8_t value)
+{
+    if (value)                            // value 是 1（非零）→ 走这条
+        port->BSRR = (1 &lt;&lt; pin);           // BSRR 低 16 位写 1 = 拉高
+    else                                  // value 是 0 → 走这条
+        port->BSRR = (1 &lt;&lt; (pin + 16));   // BSRR 高 16 位写 1 = 拉低
+}</pre>
+
+<h4>BSRR 寄存器的工作原理（这是今天最精妙的东西）</h4>
+
+<div class="register-diagram">BSRR 是个 32 位寄存器，拆成两半：
+
+高 16 位（bit 16-31）：复位区 → 写 1 到 bit(16+n) → 引脚 n 拉<strong>低</strong>
+低 16 位（bit 0-15） ：置位区 → 写 1 到 bit n     → 引脚 n 拉<strong>高</strong>
+
+写 0 到任何位 → 什么都不发生（硬件自动忽略）</div>
+
+<p>举例：要拉高 PA5 → <code>port->BSRR = (1 &lt;&lt; 5)</code> → bit5 = 1，PA5 高。</p>
+<p>举例：要拉低 PA5 → <code>port->BSRR = (1 &lt;&lt; 21)</code> → bit21 = 1，PA5 低。（21 = 5 + 16）</p>
+
+<div class="box tip">
+<strong>为什么用 BSRR 而不是直接改 ODR？</strong><br>
+ODR 需要"读 → 改 → 写"三步，如果中间被中断打断、别的代码改了同端口其他引脚，你的修改就丢了（这叫 read-modify-write 竞态）。BSRR 直接写目标位，硬件保证原子操作，不会被中断搅黄。
+</div>
+
+<h4>if (value) 怎么判断走哪条路？</h4>
+<pre>gpio_write(GPIOA, 5, 1);   // value = 1  → 1 是非零 → if (1) = 真 → 走第一条路：拉高
+gpio_write(GPIOA, 5, 0);   // value = 0  → 0 是零   → if (0) = 假 → 走第二条路：拉低</pre>
+
+<!-- ---------- 3.3 ---------- -->
+<h3>3.3 gpio_read —— 读引脚状态</h3>
+
+<pre>uint8_t gpio_read(GPIO_TypeDef *port, uint8_t pin)
+{
+    if (port->IDR &amp; (1 &lt;&lt; pin))   // IDR 的 pin 位是 1 吗？
+        return 1;                   // 是 → 返回 1（高电平）
+    else
+        return 0;                   // 不是 → 返回 0（低电平）
+}</pre>
+
+<p>IDR（Input Data Register）是只读寄存器，直接反映外部引脚电压：&gt;2V → 对应位=1；&lt;0.8V → 对应位=0。</p>
+
+<pre>// 使用示例：
+uint8_t btn = gpio_read(GPIOA, 0);   // btn = 引脚 PA0 的当前状态（0 或 1）
+if (btn == 0) {                       // 等于 0 说明 PA0 被拉低了（按键按下）
+    gpio_write(GPIOA, 5, 1);         // 亮灯
+}</pre>
+
+<div class="box q">
+<strong>🤔 为什么不直接 return port-&gt;IDR &amp; (1 &lt;&lt; pin)？</strong><br>
+因为 <code>(1 &lt;&lt; 5)</code> 的值是 <strong>32</strong>，不是 1。外面调用的人只想知道"高还是低"（0 或 1），你还得让他自己判断 32 是高还是低？封装的意义就是<strong>替调用者处理好这些脏活</strong>，返回干净的结果。
+</div>
+
+<!-- ---------- 3.4 ---------- -->
+<h3>3.4 gpio_toggle —— 翻转电平</h3>
+
+<pre>void gpio_toggle(GPIO_TypeDef *port, uint8_t pin)
+{
+    if (port->ODR &amp; (1 &lt;&lt; pin))        // 现在是高？
+        port->BSRR = (1 &lt;&lt; (pin + 16));  // → 拉低
+    else                                 // 现在是低？
+        port->BSRR = (1 &lt;&lt; pin);          // → 拉高
+}</pre>
+
+<p>原理：先读 ODR 确认当前状态 → 反着写。高就写低，低就写高。</p>
+
+<p>ODR（Output Data Register）记录每个引脚当前输出的是什么电平。跟 IDR 的区别：IDR 是引脚<strong>实际</strong>电压（外部可能被拉高/拉低），ODR 是芯片<strong>想输出</strong>的电压。</p>
+
+<!-- ================================================================ -->
+<h2>4. main.c —— 用你的函数点灯</h2>
+
+<span class="code-label">main.c</span>
+<pre class="labeled">#include "gpio.h"        // 拉进 gpio_init / gpio_toggle 的声明
+
+void SystemInit(void) {}    // 启动文件需要这个函数，空着就行
+
+void delay(volatile uint32_t n)   // volatile = 禁止编译器把循环优化掉
+{
+    while (n--);
+}
+
+int main(void)
+{
+    gpio_init(GPIOC, 13, OUT_PP);    // PC13 设为推挽输出 —— 只一行！
+
+    while (1) {
+        gpio_toggle(GPIOC, 13);      // 翻转 —— 也只一行！
+        delay(5000000);              // 延时让你肉眼看见闪
+    }
+}</pre>
+
+<!-- ================================================================ -->
+<h2>5. 今天踩的坑：编译器把 delay 吃掉了</h2>
+
+<h3>5.1 现象</h3>
+<p>灯不闪，一直亮。明明延时了 500000，肉眼应该看得见闪烁。</p>
+
+<h3>5.2 原因</h3>
+<p>编译器看到：</p>
+<pre>void delay(uint32_t n)   // ← 没有 volatile
+{
+    while (n--);          // 编译器：这个循环什么有用的都没干？删了。
+}</pre>
+<p>编译器的优化策略是"等价变换"——既然 while 循环不改变任何东西，它等价于什么都不做，直接删掉。你的 500000 次循环被压缩成了 0 次。</p>
+
+<h3>5.3 修复</h3>
+<pre>void delay(volatile uint32_t n)   // volatile 告诉编译器：n 随时可能变，别自作聪明
+{
+    while (n--);                    // 编译器：好吧，老老实实循环
+}</pre>
+
+<div class="box warn">
+<strong>⚠️ volatile 什么时候用？</strong><br>
+· 延时循环变量 → 加 volatile，否则被优化掉<br>
+· 指向寄存器的指针 → 必须 volatile（硬件值会自己变，编译器不知道）<br>
+· 中断里修改的全局变量 → 加 volatile，否则编译器可能读到旧值<br>
+· 普通变量 → 不用加，让编译器优化
+</div>
+
+<!-- ================================================================ -->
+<h2>6. 完整文件清单 & 今天的产出</h2>
+
+<table>
+  <tr><th>文件</th><th>位置</th><th>行数</th><th>状态</th></tr>
+  <tr><td><code>gpio.h</code></td><td>C:\STM32\MiniLib-F103\</td><td>19</td><td><span class="gr">✅</span></td></tr>
+  <tr><td><code>gpio.c</code></td><td>C:\STM32\MiniLib-F103\</td><td>42</td><td><span class="gr">✅</span></td></tr>
+  <tr><td><code>main.c</code></td><td>C:\STM32\MiniLib-F103\</td><td>16</td><td><span class="gr">✅ 灯闪</span></td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2>7. 自测：你学透了吗？</h2>
+
+<div class="box q">
+<p><strong>不看参考答案，回答下面 5 个问题。答不上来 = 没真会，回去看对应章节。</strong></p>
+
+<ol class="step">
+  <li>一个引脚在 CRL 寄存器里占几位？pin7 的配置在 CRL 的哪几个 bit？</li>
+  <li><code>0xF &lt;&lt; offset</code> 里的 0xF 为什么是四个 1？如果一次要清 3 位，应该用几？</li>
+  <li>BSRR 拉高 PA3 写哪个 bit？拉低 PA3 又写哪个 bit？</li>
+  <li><code>#define OUT_PP 0x03</code> 和 <code>gpio_init(GPIOA, 5, OUT_PP)</code> 之间，预处理器做了什么？</li>
+  <li>今天的 delay 不加 volatile 灯就不闪——原因一句话说清楚。</li>
+</ol>
+</div>
+
+<!-- ================================================================ -->
+<h2>8. 你今天真正学到的东西（不只是代码）</h2>
+
+<table>
+  <tr><th>知识</th><th>你以前</th><th>现在</th></tr>
+  <tr><td>寄存器操作</td><td>照抄网上的 &|=^ 咒语</td><td>知道每一步在干什么——清零、移位、写入</td></tr>
+  <tr><td>函数封装</td><td>"为什么要单独写个文件？"</td><td>.h 声明 / .c 实现 / main.c 调用，三条边界清楚</td></tr>
+  <tr><td>编译器优化</td><td>"代码写得对为什么不工作？"</td><td>知道 volatile 的存在——编译器会自作聪明删代码</td></tr>
+  <tr><td>位运算直觉</td><td>0x03、0x0B、0xF 都是乱码</td><td>能对照手册把二进制翻成十六进制，给每 4 位起名字</td></tr>
+  <tr><td>BSRR vs ODR</td><td>"不都是写吗有什么区别"</td><td>知道原子操作、高/低 16 位分别拉低/拉高、写 0 无害</td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2>9. 下一步</h2>
+
+<div class="box">
+<strong>明天 W1D7：封装 RCC 时钟（rcc.c / rcc.h）</strong><br>
+gpio_init 里那堆 <code>if (port == GPIOA) RCC->APB2ENR |= ...</code> 太丑了。
+明天把它变成 <code>rcc_enable(GPIOA)</code> 一行。然后你的库就有两个模块了：gpio + rcc。
+</div>
+
+<p style="text-align:center; margin-top:3rem; color:#666; font-size:0.9rem;">
+2026-07-10 · W1D6 · MiniLib-F103 v0.1 · 灯在闪 ✅
+</p>
+
+</body>
+</html>

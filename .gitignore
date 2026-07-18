@@ -1,0 +1,16 @@
+# Keil MDK build artifacts
+Objects/
+Listings/
+DebugConfig/
+
+# Keil user-specific settings
+*.uvguix.*
+*.uvoptx
+
+# Python cache
+__pycache__/
+
+# Internal / scratch
+.embeddedskills/
+main.c练习
+spi,h

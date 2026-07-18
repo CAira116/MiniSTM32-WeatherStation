@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>W1D7-D8 · RCC系统时钟 + SysTick精确延时</title>
+<style>
+  :root { --bg:#1a1a2e; --card:#16213e; --accent:#e94560; --text:#e0e0e0; --code-bg:#0d1117; --border:#2a2a4a; --green:#4ecca3; --yellow:#f0c040; --blue:#5dade2; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; line-height:1.8; max-width:900px; margin:0 auto; padding:2rem 1.5rem; }
+  h1 { font-size:1.8rem; color:var(--accent); margin-bottom:0.3rem; }
+  h2 { font-size:1.3rem; color:var(--accent); margin:2.2rem 0 0.8rem; border-bottom:2px solid var(--border); padding-bottom:0.3rem; }
+  h3 { font-size:1.05rem; color:var(--yellow); margin:1.2rem 0 0.5rem; }
+  h4 { font-size:0.95rem; color:var(--blue); margin:0.8rem 0 0.3rem; }
+  p { margin:0.6rem 0; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:1rem 1.3rem; overflow-x:auto; margin:0.6rem 0 1rem; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.86rem; line-height:1.5; }
+  code { background:var(--code-bg); padding:0.15em 0.45em; border-radius:4px; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:0.9em; }
+  table { width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:0.9rem; }
+  th,td { border:1px solid var(--border); padding:0.5rem 0.8rem; text-align:left; }
+  th { background:var(--card); color:var(--accent); }
+  .box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem 1.5rem; margin:1rem 0; }
+  .box.key { border-left:4px solid var(--green); }
+  .box.warn { border-left:4px solid var(--yellow); }
+  .box.err { border-left:4px solid var(--accent); }
+  .reg-diagram { font-family:'Cascadia Code','Fira Code',monospace; white-space:pre; background:var(--code-bg); padding:0.8rem 1rem; border-radius:6px; font-size:0.83rem; overflow-x:auto; }
+  a { color:var(--accent); }
+  hr { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+  @media(max-width:600px){ body{padding:1rem;} pre{padding:0.7rem;font-size:0.78rem;} }
+</style>
+</head>
+<body>
+
+<h1>⚡ W1D7-D8 · RCC 系统时钟 + SysTick 精确延时</h1>
+<p style="color:#888;">2026-07-10 下午 · MiniLib 模块 2 & 3 · 8MHz → 72MHz + 毫秒级硬件延时</p>
+
+<!-- ============================================================ -->
+<h2>D7 续：rcc_sysclk_init —— 把芯片从 8MHz 拉到 72MHz</h2>
+
+<h3>为什么要做这个？</h3>
+<p>STM32F103 上电默认跑<strong>内部 HSI 8MHz</strong>，但芯片能跑 <strong>72MHz</strong>——快了 9 倍。上午你写的 <code>rcc_enable(GPIOx)</code> 只管开外设时钟，<strong>不管系统主频</strong>。下午加上 <code>rcc_sysclk_init()</code>，rcc 模块才完整。</p>
+
+<div class="box key">
+<strong>🔑 rcc.c 现在两个函数的分工：</strong><br>
+<code>rcc_sysclk_init()</code> → 配系统主频（全局，调用一次）<br>
+<code>rcc_enable(GPIOx)</code> → 开外设时钟（局部，用哪个开哪个）
+</div>
+
+<h3>时钟路径图</h3>
+<div class="reg-diagram">HSE 8MHz（外部晶振）
+  ↓  PLLSRC = 1（选 HSE）
+  ↓  PLLXTPRE = 0（进 PLL 前不分频）
+  ↓  PLLMUL = 0111（×9）
+72MHz（PLL 输出）
+  ↓  SW = 10（系统时钟选 PLL）
+SYSCLK = 72MHz
+  ├→ AHB  ÷1 = 72MHz
+  ├→ APB2 ÷1 = 72MHz（GPIOA/B/C、AFIO、SPI1、USART1 在这）
+  └→ APB1 ÷2 = 36MHz（USART2/3、SPI2、I2C 在这）
+</div>
+
+<h3>完整代码（逐段解释）</h3>
+
+<pre>void rcc_sysclk_init(void)
+{
+    // ═══ 前置：Flash 等待周期 ═══
+    FLASH->ACR |= (0x2 << 0);
+    // 72MHz 太快，Flash 存储器跟不上
+    // 需要插入 2 个等待周期，否则 CPU 读到错指令，直接卡死
+    // ← 今天踩的坑：没这行 = 灯不闪！</pre>
+
+<pre>    // ═══ 第①步：开 HSE 外部晶振，等它稳定 ═══
+    RCC->CR |= (1 << 16);              // HSEON = 1 → 打开 8MHz 外部晶振
+    while (!(RCC->CR & (1 << 17)));    // HSERDY = 1？没就绪就死等
+    // 晶振起振需要时间（毫秒级），必须等</pre>
+
+<pre>    // ═══ 第②步：配 PLL ═══
+    RCC->CFGR |= (1 << 16);            // PLLSRC = 1 → PLL 时钟源选 HSE
+    RCC->CFGR &= ~(1 << 17);           // PLLXTPRE = 0 → HSE 进 PLL 前不分频
+    RCC->CFGR |= (0x7 << 18);          // PLLMUL = 0111 → ×9
+    //    8MHz × 9 = 72MHz
+    RCC->CR |= (1 << 24);              // PLLON = 1 → 开 PLL
+    while (!(RCC->CR & (1 << 25)));    // PLLRDY = 1？没就绪就等</pre>
+
+<pre>    // ═══ 第③步：配总线分频 ═══
+    RCC->CFGR |= (0x4 << 8);           // PPRE1[10:8] = 100 → APB1 ÷2 = 36MHz
+    // AHB 和 APB2 默认 ÷1，不用动
+    // 为什么 APB1 要 ÷2？F103 硬件限制 APB1 不能超过 36MHz</pre>
+
+<pre>    // ═══ 第④步：切换系统时钟到 PLL ═══
+    RCC->CFGR |= (0x2 << 0);           // SW[1:0] = 10 → 选 PLL 为系统时钟
+    while ((RCC->CFGR & 0xC) != 0x8);  // SWS[3:2] 变成 10 了？
+    // 0xC = 1100 → 只保留 bit3-2
+    // 0x8 = 1000 → SWS=10 = PLL
+    // 不等于 → 还在切换中，等。等于 → 切换完成，走
+}</pre>
+
+<h3>调用方式</h3>
+<pre>int main(void)
+{
+    rcc_sysclk_init();    // ← 第一行！先提频，后面所有操作都在 72MHz 下
+    gpio_init(GPIOC, 13, OUT_PP);
+    // ...
+}</pre>
+
+<h3>今天踩的坑</h3>
+<div class="box err">
+<strong>❌ 忘了 <code>FLASH->ACR |= (0x2 << 0);</code></strong><br>
+现象：灯完全不闪<br>
+原因：72MHz 下 Flash 读指令出错，CPU 取到乱码，直接硬死<br>
+修复：加一行，编译，闪了<br>
+<strong>教训：时钟配完 → 第一件事永远是 Flash 等待周期。顺序不能乱。</strong>
+</div>
+
+<!-- ============================================================ -->
+<hr>
+
+<h2>D8：SysTick 定时器 —— 从 "volatile 空循环" 到硬件精确延时</h2>
+
+<h3>旧 delay vs 新 systick</h3>
+<table>
+  <tr><th></th><th>旧 <code>delay(volatile uint32_t n)</code></th><th>新 <code>systick_delay_ms(uint32_t ms)</code></th></tr>
+  <tr><td>精度</td><td>不知道，全靠试</td><td>精确到毫秒</td></tr>
+  <tr><td>换芯片</td><td>重新瞎调 n</td><td>改 LOAD 一个数</td></tr>
+  <tr><td>CPU</td><td>空转，浪费电</td><td>硬件计数，以后能用中断</td></tr>
+  <tr><td>依赖</td><td>无</td><td>需要 rcc_sysclk_init() 先配好 72MHz</td></tr>
+</table>
+
+<h3>SysTick 是什么？</h3>
+<p>SysTick 是 <strong>Cortex-M3 内核自带的 24 位硬件定时器</strong>——ARM 公司设计的，所有用 CM3 的芯片都有，不限于 STM32。它是一个向下计数器。</p>
+
+<h3>四个寄存器</h3>
+<table>
+  <tr><th>寄存器</th><th>干什么</th><th>类比</th></tr>
+  <tr><td><code>SysTick->LOAD</code></td><td>重装载值：从几开始往下数</td><td>闹钟，设多长时间响</td></tr>
+  <tr><td><code>SysTick->VAL</code></td><td>当前计数值：现在数到哪了</td><td>闹钟还剩多少秒</td></tr>
+  <tr><td><code>SysTick->CTRL</code></td><td>控制：开关、时钟源、标志位</td><td>闹钟的开关+模式按钮</td></tr>
+  <tr><td><code>SysTick->CALIB</code></td><td>校准值，不管它</td><td>—</td></tr>
+</table>
+
+<h3>CTRL 寄存器关键位</h3>
+<table>
+  <tr><th>位</th><th>名称</th><th>0</th><th>1</th></tr>
+  <tr><td>bit0</td><td>ENABLE</td><td>计数器停</td><td>计数器跑</td></tr>
+  <tr><td>bit1</td><td>TICKINT</td><td>不触发中断</td><td>数到 0 触发中断</td></tr>
+  <tr><td>bit2</td><td>CLKSOURCE</td><td>AHB/8（我们用的）</td><td>AHB 直通</td></tr>
+  <tr><td>bit16</td><td>COUNTFLAG</td><td>还没数完</td><td>数到 0 了！</td></tr>
+</table>
+
+<h3>核心问题：1ms 要数多少个时钟周期？</h3>
+<pre>系统时钟 AHB = 72MHz
+SysTick 用 AHB/8 = 9MHz
+        = 每秒 9,000,000 个时钟周期
+        ↓ ÷ 1000
+1ms = 9,000 个周期
+
+所以 LOAD = 9000</pre>
+
+<div class="box key">
+<strong>LOAD=9000 只在 72MHz 下成立。</strong><br>
+如果你没调 <code>rcc_sysclk_init()</code>，芯片跑 8MHz：<br>
+AHB/8 = 1MHz → 1ms = 1000 周期 → LOAD 应该是 1000<br>
+→ 写 9000 就慢了 9 倍！← 下午刚踩的坑
+</div>
+
+<h3>完整代码（逐行解释）</h3>
+
+<pre>void systick_delay_ms(uint32_t ms)
+{
+    // ① 选时钟源：bit2 = 0 → AHB/8 = 9MHz
+    SysTick->CTRL &= ~(1 << 2);
+
+    // ② 设 LOAD：1ms 要数 9000 个周期
+    SysTick->LOAD = 9000;
+
+    // ③ 启动计数器：bit0 = 1
+    SysTick->CTRL |= 1;
+
+    // ④ 循环 ms 次，每次等 1ms
+    while (ms--) {
+        // 内层：死等 COUNTFLAG 变 1
+        // bit16 = 0（还没到）→ !0 = 真 → 继续等
+        // bit16 = 1（到了！）→ !非零 = 假 → 往下走
+        while (!(SysTick->CTRL & (1 << 16)));
+        // 读到 bit16=1 的瞬间，硬件自动清零，VAL 自动重载 9000
+    }
+
+    // ⑤ 关计数器：bit0 = 0
+    SysTick->CTRL &= ~1;
+}</pre>
+
+<h3>while (ms--) 怎么工作的？</h3>
+<pre>调用 systick_delay_ms(500)：ms = 500
+
+ms-- = 先用再减：
+  第 1 轮：ms=500 ≠0 ✓ → ms 减到 499 → 等 1ms → 回头
+  第 2 轮：ms=499 ≠0 ✓ → ms 减到 498 → 等 1ms → 回头
+  ...
+  第 500 轮：ms=1 ≠0 ✓ → ms 减到 0 → 等 1ms → 回头
+  第 501 轮：ms=0 =0 ✗ → 退出
+
+总共 = 500 × 1ms = 500ms ✅</pre>
+
+<h3>完整链路：systick_delay_ms(500) 到底发生了什么</h3>
+<div class="reg-diagram">main.c 调用 systick_delay_ms(500)
+        ↓
+    ms = 500
+        ↓
+    LOAD = 9000（硬件：每 9000 个周期 = 1ms）
+    启动计数器
+        ↓
+    等 1ms → ms-1 → 等 1ms → ms-1 → ...（重复 500 次）
+        ↓
+    关计数器 → 回到 main.c</div>
+
+<h3>使用方式</h3>
+<pre>#include "systick.h"            // ① 声明
+
+systick_delay_ms(500);          // ② 500 毫秒
+systick_delay_ms(10);           // ③ 10 毫秒
+// 跟 gpio_write 一样：声明一次，后面直接调</pre>
+
+<!-- ============================================================ -->
+<hr>
+
+<h2>🛠️ 调试日志：systick 踩坑实录</h2>
+
+<h3>坑 1：LOAD = 9000 但芯片跑 8MHz</h3>
+<div class="box err">
+<strong>现象：</strong>灯闪得非常慢，500ms 延时感觉像 4-5 秒<br>
+<strong>原因：</strong>SystemInit 是空的，芯片跑 8MHz。LOAD=9000 是按 72MHz 算的<br>
+<strong>修复：</strong>写 rcc_sysclk_init()，把时钟拉到 72MHz→ LOAD=9000 自然就对了
+</div>
+
+<h3>坑 2：忘了 FLASH->ACR</h3>
+<div class="box err">
+<strong>现象：</strong>加了 rcc_sysclk_init() 之后灯完全不闪<br>
+<strong>原因：</strong>72MHz 下 Flash 需要 2 个等待周期，没设 → CPU 读指令出错 → 卡死<br>
+<strong>修复：</strong><code>FLASH->ACR |= (0x2 << 0);</code> 加在 RCC 操作之前
+</div>
+
+<h3>坑 3：while 条件写反</h3>
+<div class="box warn">
+<strong>错误写法：</strong><code>while (RCC->CR & (1 << 17))</code> → bit17=1 说明 HSE <strong>就绪了</strong>，你却继续循环<br>
+<strong>正确写法：</strong><code>while (!(RCC->CR & (1 << 17)));</code> → bit17=0（没就绪）→ 等。bit17=1 → 走
+</div>
+
+<!-- ============================================================ -->
+<hr>
+
+<h2>📊 MiniLib 当前状态</h2>
+<table>
+  <tr><th>#</th><th>模块</th><th>文件</th><th>函数</th><th>状态</th></tr>
+  <tr><td>1</td><td>GPIO</td><td>gpio.c/h</td><td>init / write / read / toggle</td><td style="color:#4ecca3;">✅</td></tr>
+  <tr><td>2</td><td>RCC</td><td>rcc.c/h</td><td>rcc_sysclk_init / rcc_enable</td><td style="color:#4ecca3;">✅</td></tr>
+  <tr><td>3</td><td>SysTick</td><td>systick.c/h</td><td>systick_delay_ms</td><td style="color:#4ecca3;">✅</td></tr>
+  <tr><td>4</td><td>USART</td><td>—</td><td>—</td><td style="color:#888;">⬜ W1D9</td></tr>
+</table>
+
+<h3>工程文件结构</h3>
+<pre>C:\STM32\MiniLib-F103\
+├── gpio.h / gpio.c           ← GPIO 封装
+├── rcc.h / rcc.c             ← 时钟：sysclk + 外设开关
+├── systick.h / systick.c     ← 精确延时
+├── main.c                    ← 快闪3下+慢闪3下
+├── MiniLib-F103.uvprojx      ← Keil 工程
+├── W1D6-gpio-tutorial.html
+├── W1D6-self-test.html
+├── W1D1-D6-reference.html
+├── SEMS-progress-dashboard.html
+└── W1D7-D8-tutorial.html     ← 本页
+</pre>
+
+<hr>
+
+<p style="text-align:center; color:#666; font-size:0.9rem;">
+  2026-07-10 · W1D7-D8 · 3 个模块 · 7 个函数 · 0 Error 0 Warning<br>
+  明天 W1D9 · USART 串口 → printf 重定向到电脑
+</p>
+
+</body>
+</html>
