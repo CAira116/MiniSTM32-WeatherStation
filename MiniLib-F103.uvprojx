@@ -582,6 +582,16 @@
               <FileType>1</FileType>
               <FilePath>.\esp8266.c</FilePath>
             </File>
+            <File>
+              <FileName>ssd1306.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\ssd1306.c</FilePath>
+            </File>
+            <File>
+              <FileName>ssd1306.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\ssd1306.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
