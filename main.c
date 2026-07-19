@@ -35,6 +35,7 @@
 #include "bh1750.h"
 #include "dht11.h"
 #include "ssd1306.h"
+#include "exti.h"
 #include "FreeRTOS.h"
 #include "task.h"   // 任务: xTaskCreate / vTaskDelay / ulTaskNotifyTake / xTaskNotifyGive
 #include "queue.h"  // 队列: xQueueCreate / xQueueSend / xQueueReceive
@@ -98,8 +99,12 @@ TaskHandle_t hDisplayTask = NULL;
 void Task_display(void *param)
 {
     char line[22];
+	  static float t_max = -99, t_min = 99;   // 温度极值
+    static float h_max = 0,   h_min = 100;  // 湿度极值
     static int count = 0; /* 私有: 刷新次数，别的任务碰不到 */
-
+    static uint8_t page = 0 ;
+	  static uint32_t last_btn_time = 0;
+	  static SensorData last_data ={0};
     while (1) {
         SensorData data;
         int uptime = (int)(systick_get_ms() / 1000);
@@ -107,21 +112,57 @@ void Task_display(void *param)
         /* 睡着等通知: vTimerCallback 发了 xTaskNotifyGive 才醒 */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        /* 收队列: timeout=0 因为通知已保证数据就绪，不需要再等 */
-        xQueueReceive(g_display_queue, &data, 0);
+			
+			if (xQueueReceive(g_display_queue,&data,0)==pdTRUE){
+			last_data=data;
+			if (data.temp > t_max) t_max = data.temp;
+      if (data.temp < t_min) t_min = data.temp;
+      if (data.hum  > h_max) h_max = data.hum;
+      if (data.hum  < h_min) h_min = data.hum;
+				count ++;
+			}
+			else{
+				uint32_t now = systick_get_ms(); 
+				if(now-last_btn_time > 70){
+			page=(page+1)%3;
+				}
+			}
 
         /* ── I2C 互斥锁: 保护 OLED ── */
         xSemaphoreTake(g_i2c_mutex, portMAX_DELAY);
         ssd1306_clear();
-        sprintf(line, "T=%.1fC H=%.0f%%", data.temp, data.hum);
+			 switch(page){
+			   case 0:
+					 sprintf(line, "T=%.1fC H=%.0f%%", last_data.temp, last_data.hum);
         ssd1306_show_str(0, line);
-        sprintf(line, "P=%.1fhPa L=%.0flux", data.press, data.lux);
+        sprintf(line, "P=%.1fhPa L=%.0flux", last_data.press, last_data.lux);
         ssd1306_show_str(1, line);
-        sprintf(line, "#%d up=%us", count + 1, uptime);
-        ssd1306_show_str(3, line);
+       sprintf(line, "#%d up=%ds", count, uptime);
+           ssd1306_show_str(3,line);
+				 break ;
+				 
+				 case 1:
+					ssd1306_show_str(0,"==SYSTEM==");
+          sprintf(line,"UP:%d",uptime);
+          ssd1306_show_str(1,line);
+          sprintf(line,"Dis:%d",count);
+           ssd1306_show_str(2,line);
+          ssd1306_show_str(3,"BTN: next page");
+           break ;				 
+				 case 2:
+					 ssd1306_show_str(0, "=== EXTREMES ===");
+      sprintf(line, "T:%.1f/%.1fC", t_max, t_min);
+      ssd1306_show_str(1, line);
+      sprintf(line, "H:%.0f/%.0f%%", h_max, h_min);
+       ssd1306_show_str(2, line);
+      sprintf(line, "#%d up=%ds", count, uptime);
+      ssd1306_show_str(3, line);
+      break;					 
+			 }
+        
         xSemaphoreGive(g_i2c_mutex); /* ── 解锁 ── */
 
-        count++;
+     
     }
 }
 
@@ -228,6 +269,7 @@ int main(void)
     usart_init(USART1, 115200);
     usart2_init(115200);
     i2c_init();
+	  exti_init(GPIOA, 1, EXTI_FALLING);
     bmp280_init();
     bh1750_init();
     dht11_init(GPIOA, 0);

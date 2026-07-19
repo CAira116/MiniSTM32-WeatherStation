@@ -7,6 +7,6 @@
 
   void exti_init(GPIO_TypeDef *port, uint8_t pin, uint8_t trigger);
 
-  extern volatile uint8_t button_flag;
+
 
 #endif

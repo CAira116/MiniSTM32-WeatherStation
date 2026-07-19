@@ -1,24 +1,19 @@
 #include "exti.h"
 #include "systick.h"
 #include "gpio.h"
-#include <stdio.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
-volatile uint8_t button_flag = 0;  // 全局标志位：1=有人按了按钮，主循环读到后清零
+extern TaskHandle_t hDisplayTask;
 
-/*
- * EXTI0 中断服务函数
- * 按钮按下（PA0 产生下降沿）→ 硬件自动跳转到这里
- * 注意：函数名是启动文件写死的，不能改
- */
-void EXTI0_IRQHandler(void){
-    // 消抖：等20ms，让按键的机械抖动过去（否则可能误读成"没按"）
-//    systick_delay_ms(20);
-    // 消抖后再次确认——真的还是低电平？
-    if (gpio_read(GPIOA, 0) == 0) {
-        button_flag = 1;  // 告诉主循环：按钮被按过了
-    }
-    // 清除挂起位。PR是W1C寄存器（写1=清0），不写这一行→ISR退出了硬件看到PR还是1→立刻再进ISR→死循环
-    EXTI->PR |= (1<<0);
+void EXTI1_IRQHandler(void){
+ BaseType_t woken = pdFALSE;
+	
+	if(gpio_read(GPIOA,1)==0){
+	vTaskNotifyGiveFromISR(hDisplayTask,&woken);
+	}
+	EXTI->PR |=(1<<1);
+	portYIELD_FROM_ISR(woken);
 }
 
 /*
