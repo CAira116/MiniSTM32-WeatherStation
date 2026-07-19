@@ -14,3 +14,13 @@ __pycache__/
 .embeddedskills/
 main.c练习
 spi,h
+
+# FreeRTOS pack download artifacts
+ARM.CMSIS-FreeRTOS.pack
+_pack_extract/
+freertos.tar.gz
+freertos.zip
+
+# Backup files
+.backup/
+main_original.c
